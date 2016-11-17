@@ -14,19 +14,22 @@ import GHC.Generics
 import Lib
 import System.Environment (getArgs)
 
-data OtpInstruction = Ping | NoMorePings
+data OtpInstruction = Ping | NoMorePings ProcessId
   deriving (Typeable, Generic)
 instance Binary OtpInstruction
 
 data OtpSlaveResponse = NoMorePingsAck
+  deriving (Typeable, Generic)
+instance Binary OtpSlaveResponse
 
 slaveAction :: OtpInstruction -> Process ()
 slaveAction instruction = getSelfPid >>= ((flip slaveAction' instruction) . show)
 
 slaveAction' :: String -> OtpInstruction -> Process ()
 slaveAction' selfPid Ping = say $ "PONG! (from " ++ selfPid ++ ")"
-slaveAction' selfPid NoMorePings = do
+slaveAction' selfPid (NoMorePings masterPid) = do
   say $ "ACK for NoMorePings from " ++ selfPid
+  send masterPid NoMorePingsAck
 
 slaveLoop :: Process ()
 slaveLoop = do
@@ -48,7 +51,9 @@ master backend slaves = do
   slaveProcIds <- mapM spawnSlave slaves
   let pings = take 100 . cycle $ slaveProcIds in do
     sequence $ map (\slavePID -> send slavePID Ping) pings
-  liftIO $ threadDelay 100000
+  selfPid <- getSelfPid
+  sequence $ flip map slaveProcIds $ \pid -> send pid $ NoMorePings selfPid
+  sequence $ flip map slaveProcIds $ \_ -> receiveWait [ match ((\_ -> return ()) :: OtpSlaveResponse -> Process()) ]
   liftIO . putStrLn $ "done waiting for slaves - terminating"
   -- Terminate the slaves when the master terminates (this is optional)
   terminateAllSlaves backend
