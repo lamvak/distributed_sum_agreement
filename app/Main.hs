@@ -14,17 +14,19 @@ import GHC.Generics
 import Lib
 import System.Environment (getArgs)
 
-data OtpInstruction = Quit | Ping
+data OtpInstruction = Ping | NoMorePings
   deriving (Typeable, Generic)
-
 instance Binary OtpInstruction
 
+data OtpSlaveResponse = NoMorePingsAck
+
 slaveAction :: OtpInstruction -> Process ()
-slaveAction Ping = do
-  selfNode <- getSelfNode
-  say $ "PONG! (from " ++ (show selfNode) ++ ")"
-  return ()
-slaveAction Quit = terminate
+slaveAction instruction = getSelfPid >>= ((flip slaveAction' instruction) . show)
+
+slaveAction' :: String -> OtpInstruction -> Process ()
+slaveAction' selfPid Ping = say $ "PONG! (from " ++ selfPid ++ ")"
+slaveAction' selfPid NoMorePings = do
+  say $ "ACK for NoMorePings from " ++ selfPid
 
 slaveLoop :: Process ()
 slaveLoop = do
@@ -43,23 +45,23 @@ spawnSlave node = spawn node $ $(mkStaticClosure 'slaveLoop)
 
 master :: Backend -> [NodeId] -> Process ()
 master backend slaves = do
-  -- Do something interesting with the slaves
-  liftIO . putStrLn $ "Slaves: " ++ show slaves
-  slaveProcIds <- return . sequence $ map spawnSlave slaves
-  redirectLogsHere backend <$> slaveProcIds
-  pings <- (take 16) . cycle <$> slaveProcIds
-  liftIO $ putStrLn $ "Pings: " ++ (show pings)
-  sequence $ map (\slavePID -> send slavePID Ping) pings
-  liftIO $ threadDelay 1000000
+  slaveProcIds <- mapM spawnSlave slaves
+  let pings = take 100 . cycle $ slaveProcIds in do
+    sequence $ map (\slavePID -> send slavePID Ping) pings
+  liftIO $ threadDelay 100000
+  liftIO . putStrLn $ "done waiting for slaves - terminating"
   -- Terminate the slaves when the master terminates (this is optional)
   terminateAllSlaves backend
 
 main :: IO ()
 main = do
   args <- getArgs
+  putStrLn $ "Application run with following args: " ++ (show args)
   case args of
     ["master", host, port] -> do
+      putStrLn $ "Starting master at " ++ host ++ ":" ++ port
       backend <- initializeBackend host port (__remoteTable initRemoteTable)
+      liftIO $ threadDelay 100000
       startMaster backend (master backend)
     ["slave", host, port] -> do
       putStrLn $ "Starting slave at " ++ host ++ ":" ++ port
