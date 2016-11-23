@@ -23,28 +23,74 @@ import System.IO
 import System.Random (mkStdGen, setStdGen)
 import Simulation
 
-
-remotable ['runOptimisticStateManager, 'optimisticInputGenerator]
+remotable ['runOptimisticStateManager, -- State Managers [managed]
+           'runListStateManager,
+           'runTreeStateManager,
+           'runExchangeManager,        -- Exchange Managers [managed]
+           'optimisticInputGenerator,  -- Simulation input generators
+           'finDelaysInputGenerator,
+           'infDelaysInputGenerator]
 
 spawnOptimisticInputGenerator :: [ProcessId] -> NodeId -> Process ProcessId
 spawnOptimisticInputGenerator consumers node = do
-  say "spawning input generator(1)"
+  say "spawning optimisticInputGenerator"
   spawn node $ $(mkClosure 'optimisticInputGenerator) consumers
 
-spawnOptimisticServer :: NodeId -> Process ProcessId
-spawnOptimisticServer node = spawn node $ $(mkStaticClosure 'runOptimisticStateManager)
+spawnFinDelaysInputGenerator :: [ProcessId] -> NodeId -> Process ProcessId
+spawnFinDelaysInputGenerator consumers node = do
+  say "spawning finDelaysInputGenerator"
+  spawn node $ $(mkClosure 'finDelaysInputGenerator) consumers
 
+spawnInfDelaysInputGenerator :: [ProcessId] -> NodeId -> Process ProcessId
+spawnInfDelaysInputGenerator consumers node = do
+  say "spawning infDelaysInputGenerator"
+  spawn node $ $(mkClosure 'infDelaysInputGenerator) consumers
+
+spawnGenerators :: GenModel -> [NodeId] -> [ProcessId] -> Process [ProcessId]
+spawnGenerators OneGen slaves stateMgrs = spawnGenerators MultiGen [minimum slaves] stateMgrs
+spawnGenerators MultiGen slaves stateMgrs = do
+  generators <- sequence $ map (spawnOptimisticInputGenerator stateMgrs) slaves
+  say $ "Generators: " ++ (show generators)
+  return generators
+spawnGenerators FinDelays slaves stateMgrs = do
+  generators <- sequence $ map (spawnFinDelaysInputGenerator stateMgrs) slaves
+  say $ "Generators: " ++ (show generators)
+  return generators
+spawnGenerators InfDelays slaves stateMgrs = do
+  generators <- sequence $ map (spawnInfDelaysInputGenerator stateMgrs) slaves
+  say $ "Generators: " ++ (show generators)
+  return generators
+
+spawnSlaveWorkers :: StateModel -> [NodeId] -> Process [ProcessId]
+spawnSlaveWorkers Simple slaves = do
+  sequence $ map (\node -> spawn node $ $(mkStaticClosure 'runOptimisticStateManager)) slaves
+spawnSlaveWorkers Tree slaves = do
+  sequence $ map (\node -> spawn node $ $(mkStaticClosure 'runTreeStateManager)) slaves
+spawnSlaveWorkers List slaves = do
+  sequence $ map (\node -> spawn node $ $(mkStaticClosure 'runListStateManager)) slaves
+spawnSlaveWorkers Dynamic _ = do
+  say "Dynamic state switch not implemented yet"
+  return []
+
+spawnExchangeServers :: [NodeId] -> Process [ProcessId]
+spawnExchangeServers slaves = do
+  exchanges <- sequence $ map (\node -> spawn node $ $(mkStaticClosure 'runExchangeManager)) slaves
+  sequence $ map (\pid -> cast pid (Neighbours exchanges)) exchanges
+  return exchanges
+
+
+---- !!!! glue together state and exchange servers !!!! ----
 master :: Int -> Int -> SimulationModel -> Backend -> [NodeId] -> Process ()
 master sendFor waitFor (SimulationModel stateModel genModel) backend slaves = do
   selfPid <- getSelfPid
   say $ "Starting master: " ++ (show selfPid)
   say $ "Slaves: " ++ (show slaves)
-  stateManagers <- sequence $ map spawnOptimisticServer slaves
+  stateManagers <- spawnSlaveWorkers stateModel slaves
   say $ "State managers: " ++ (show stateManagers)
-  inputGenerators <- let spawner = spawnOptimisticInputGenerator stateManagers in
---    sequence $ map spawner slaves
-    sequence $ map spawner $ [minimum slaves]
-  say $ "input generators: " ++ (show inputGenerators)
+  exchanges <- spawnExchangeServers slaves
+  say $ "Exchanges: " ++ (show exchanges)
+  inputGenerators <- spawnGenerators genModel slaves exchanges
+  say $ "Generators: " ++ (show inputGenerators)
   liftIO $ threadDelay (sendFor * 1000000)
   mapM_ (flip exit $ "sendFor timeout reached") inputGenerators
   liftIO $ threadDelay 500000

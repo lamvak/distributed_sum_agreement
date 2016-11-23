@@ -8,6 +8,7 @@ import Control.Distributed.Process
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Extras (ExitReason(ExitNormal))
+import Control.Distributed.Process.Extras.Time
 import Control.Distributed.Process.ManagedProcess
 import Control.Distributed.Process.Node
 import Control.Monad
@@ -21,6 +22,28 @@ import GHC.Generics
 
 import Control.Distributed.Process
 import Control.Distributed.Process.ManagedProcess
+
+runExchangeManager :: Process ()
+runExchangeManager = do
+  selfPid <- getSelfPid
+  say $ "Running exchange manager " ++ (show selfPid)
+  timer <- liftIO $ forkIO $ forever $ do
+    threadDelay 250
+    _ <- return $ cast selfPid Resend
+    return ()
+  serve () initExchangeState defaultProcess {
+    apiHandlers = [
+        handleCast exchangeInputAction
+      , handleCast exchangeInputAction
+      -- TODO: kill timer on handleShutdown
+    ]
+  , unhandledMessagePolicy = Log
+  }
+
+initExchangeState :: InitHandler () ExchangeState
+initExchangeState _ = do
+  ht <- liftIO H.new
+  return $ InitOk (ExchangeState{exchanges=[],known=ht}) Infinity
 
 -- exchangeInputAction :: ExchangeState -> OtpInputMessage -> Process (ProcessAction a)
 exchangeInputAction :: ExchangeManagerInputAction ExchangeState
@@ -37,6 +60,9 @@ exchangeAction state exchange@(XMsg input _) = do
 exchangeAction state exchange@(Ack _ _) = do
   _ <- liftIO $ removeWaitingForAck state exchange
   continue state
+exchangeAction state (Neighbours pids) = do
+  selfPid <- getSelfPid
+  continue $ state {exchanges=(delete selfPid pids)}
 exchangeAction state Resend = do
   advertiseAll state
   continue state

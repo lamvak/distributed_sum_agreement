@@ -19,6 +19,7 @@ instance Hashable OtpInputMessage
 --                             Original payload, Exchange sender
 data OtpExchangeMessage = XMsg OtpInputMessage   ProcessId
                         | Ack  OtpInputMessage   ProcessId
+                        | Neighbours [ProcessId]
                         | Resend
   deriving (Typeable, Generic, Show)
 instance Binary OtpExchangeMessage
