@@ -3,13 +3,15 @@
 module Simulation where
 
 import Common
-import Control.Concurrent
+--import Control.Concurrent
+import Control.Concurrent.Lifted
 import Control.Distributed.Process
 import Control.Distributed.Process.Backend.SimpleLocalnet
 import Control.Distributed.Process.Closure
 import Control.Distributed.Process.Extras (ExitReason(ExitNormal))
 import Control.Distributed.Process.Extras.Time
 import Control.Distributed.Process.ManagedProcess
+import Control.Distributed.Process.MonadBaseControl
 import Control.Distributed.Process.Node
 import Control.Monad
 --import Control.Monad.Trans.Class
@@ -26,8 +28,6 @@ import System.Random
 -- Input Generator: generate input and send out to state managers
 inputGenerator :: IO Delay -> IO () -> [ProcessId] -> Process ()
 inputGenerator sendDelay iterationDelay consumers = do
-  liftIO $ putStrLn "foo"
-  say "bar"
   selfPid <- getSelfPid
   say $ "starting generator " ++ (show selfPid)
   forever $ do
@@ -37,18 +37,22 @@ inputGenerator sendDelay iterationDelay consumers = do
     input <- liftIO otpRandIO
     say $ (show selfPid) ++ " sending out " ++ (show input) ++
          " at " ++ (show timeStamp) ++ " to " ++ (show consumers)
-    liftIO $ sequence_ $ (flip map) consumers $ \pid -> forkIO $ do
-      delay <- sendDelay
-      let doSend = cast pid $ OtpInputMessage selfPid timeStamp input in
-        case delay of
-          Delay x -> do
-            threadDelay (asTimeout x)
-            _ <- return doSend
-            return ()
-          NoDelay -> do
-            _ <- return doSend
-            return ()
-          Infinity -> return () -- Infinite delay = just skip the message
+--    liftIO $ sequence $ (flip map) consumers $ (\pid -> forkIO $ do
+    sequence $ (flip map) consumers $ (\pid -> fork $ do
+      delay <- liftIO sendDelay
+      case delay of
+        Delay x -> do
+          threadDelay (asTimeout x)
+          say $ "Sending " ++ (show input) ++ " with delay of " ++ (show $ asTimeout x)
+          cast pid $ OtpInputMessage selfPid timeStamp input
+          say $ ">> " ++ (show input) ++ " sent"
+        NoDelay -> do
+          say $ "Sending " ++ (show input) ++ " without delay"
+          cast pid $ OtpInputMessage selfPid timeStamp input
+          say $ ">> " ++ (show input) ++ " sent"
+        Infinity -> do
+          say $ "Skipping " ++ (show input) ++ " (INFINITE delay)"
+      )
 
 optimisticInputGenerator :: [ProcessId] -> Process ()
 optimisticInputGenerator = inputGenerator noDelay iterationDelayer

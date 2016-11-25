@@ -28,53 +28,79 @@ runExchangeManager = do
   selfPid <- getSelfPid
   say $ "Running exchange manager " ++ (show selfPid)
   timer <- liftIO $ forkIO $ forever $ do
-    threadDelay 250
-    _ <- return $ cast selfPid Resend
+    threadDelay 400000
+    putStrLn $ "(STDOUT) TICK! from " ++ (show selfPid)
+    _ <- return $ do
+      say $ "TICK! from " ++ (show selfPid)
+      cast selfPid Resend
     return ()
-  serve () initExchangeState defaultProcess {
+  serve () initExchangeState $ defaultProcess {
     apiHandlers = [
-        handleCast exchangeInputAction
+        handleCast exchangeAction
       , handleCast exchangeInputAction
       -- TODO: kill timer on handleShutdown
     ]
   , unhandledMessagePolicy = Log
+  , timeoutHandler = \s _ -> (say $ "timeout") >> continue s
+  , shutdownHandler = \_ _ -> do
+      say $ "shutting down server " ++ (show selfPid)
+      return ()
   }
+  say $ "exchange manager " ++ (show selfPid) ++ " finished"
 
 initExchangeState :: InitHandler () ExchangeState
 initExchangeState _ = do
   ht <- liftIO H.new
-  return $ InitOk (ExchangeState{exchanges=[],known=ht}) Infinity
+  return $ InitOk (ExchangeState{exchanges=[],known=ht,stateMgr=Nothing}) Infinity
 
 -- exchangeInputAction :: ExchangeState -> OtpInputMessage -> Process (ProcessAction a)
 exchangeInputAction :: ExchangeManagerInputAction ExchangeState
 exchangeInputAction state input = do
+  say "exchangeInputAction"
   handle state input
   continue state
 
 -- exchangeInputAction :: ExchangeState -> OtpExchangeMessage -> Process (ProcessAction a)
 exchangeAction :: ExchangeManagerExchangeAction ExchangeState
 exchangeAction state exchange@(XMsg input _) = do
+  say "XMsg"
+  liftIO $ putStrLn "XXXMsg"
   acknowledge exchange
   handle state input
   continue $ state
 exchangeAction state exchange@(Ack _ _) = do
+  say "Ack"
+  liftIO $ putStrLn "AAAck"
   _ <- liftIO $ removeWaitingForAck state exchange
   continue state
 exchangeAction state (Neighbours pids) = do
+  say "Neigh"
+  liftIO $ putStrLn "NNNeigh"
   selfPid <- getSelfPid
   continue $ state {exchanges=(delete selfPid pids)}
+exchangeAction state (PairWith pid master) = do
+  selfPid <- getSelfPid
+  say $ (show selfPid) ++ " pairing up with state manager " ++ (show pid)
+  cast master (PairingAck selfPid)
+  continue $ state {stateMgr=Just pid}
 exchangeAction state Resend = do
+  say "Resend"
+  liftIO $ putStrLn "RRResend"
   advertiseAll state
   continue state
 
 handle :: ExchangeState -> OtpInputMessage -> Process ExchangeState
 handle state@(ExchangeState{known=pending}) input = do
+  selfPid <- getSelfPid
+  say $ (show selfPid) ++ " handling " ++ (show input)
   known <- liftIO $ H.lookup pending input
   maybe (markAsKnownAndAdvertise state input) (\_ -> return state) known
 
 markAsKnownAndAdvertise :: ExchangeState -> OtpInputMessage -> Process ExchangeState
-markAsKnownAndAdvertise state@(ExchangeState{exchanges=others}) input = do
+markAsKnownAndAdvertise state@(ExchangeState{exchanges=others,stateMgr=maybeMgr}) input = do
     selfPid <- getSelfPid
+    maybe (return ()) (\pid -> do say $ (show selfPid) ++ " casting input to mgr " ++ (show pid)
+                                  cast pid input) maybeMgr
     liftIO $ do
       advertise selfPid (input, others)
       addPendingForAck state input

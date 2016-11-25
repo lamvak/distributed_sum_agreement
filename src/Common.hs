@@ -20,6 +20,8 @@ instance Hashable OtpInputMessage
 data OtpExchangeMessage = XMsg OtpInputMessage   ProcessId
                         | Ack  OtpInputMessage   ProcessId
                         | Neighbours [ProcessId]
+                        | PairWith ProcessId ProcessId
+                        | PairingAck ProcessId
                         | Resend
   deriving (Typeable, Generic, Show)
 instance Binary OtpExchangeMessage
@@ -40,6 +42,7 @@ type ExchangeManagerExchangeAction a = a -> OtpExchangeMessage-> Process (Proces
 
 data ExchangeState = ExchangeState { known :: HashTable OtpInputMessage [ProcessId]
                                    , exchanges :: [ProcessId]
+                                   , stateMgr :: Maybe ProcessId
                                    }
 
 
