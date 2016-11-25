@@ -1,0 +1,10 @@
+* Building:
+Use stack, i.e.
+  stack build
+* Running
+Example of running a slave:
+  stack exec otp-exe -- --slave localhost 8081 --with-seed 42
+Example of running a master:
+  stack exec otp-exe -- --slave localhost 8081 --with-seed 42
+Please, see definition of command line parameters in Lib.sh
+I will provide more description soon.
