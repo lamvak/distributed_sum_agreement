@@ -71,7 +71,7 @@ exchangeAction state exchange@(XMsg input _) = do
 exchangeAction state exchange@(Ack _ _) = do
   say "Ack"
   liftIO $ putStrLn "AAAck"
-  _ <- liftIO $ removeWaitingForAck state exchange
+  removeWaitingForAck state exchange
   continue state
 exchangeAction state (Neighbours pids) = do
   say "Neigh"
@@ -101,20 +101,20 @@ markAsKnownAndAdvertise state@(ExchangeState{exchanges=others,stateMgr=maybeMgr}
     selfPid <- getSelfPid
     maybe (return ()) (\pid -> do say $ (show selfPid) ++ " casting input to mgr " ++ (show pid)
                                   cast pid input) maybeMgr
-    liftIO $ do
-      advertise selfPid (input, others)
-      addPendingForAck state input
+    advertise selfPid (input, others)
+    addPendingForAck state input
     return state
 
 advertiseAll :: ExchangeState -> Process ExchangeState
 advertiseAll state@(ExchangeState{known=pending}) = do
   selfPid <- getSelfPid
-  liftIO $ H.mapM_ (advertise selfPid) pending
+  let advertiseAction = return . (advertise selfPid) in
+    liftIO $ H.mapM_ advertiseAction pending
   return state
 
-advertise :: ProcessId -> (OtpInputMessage, [ProcessId]) -> IO ()
+advertise :: ProcessId -> (OtpInputMessage, [ProcessId]) -> Process ()
 advertise selfPid (input, others) = do
-  _ <- return $ sequence $ map (\pid -> cast pid $ XMsg input selfPid) others
+  sequence $ map (\pid -> cast pid $ XMsg input selfPid) others
   return ()
 
 acknowledge :: OtpExchangeMessage -> Process ()
@@ -122,13 +122,12 @@ acknowledge (XMsg input sender) = do
   selfPid <- getSelfPid
   cast sender (Ack input selfPid)
 
-addPendingForAck :: ExchangeState -> OtpInputMessage -> IO ExchangeState
+addPendingForAck :: ExchangeState -> OtpInputMessage -> Process ExchangeState
 addPendingForAck state@(ExchangeState{known=pending, exchanges=others}) input = do
-  H.insert pending input others
+  liftIO $ H.insert pending input others
   return state
 
-removeWaitingForAck :: ExchangeState -> OtpExchangeMessage -> IO ()
+removeWaitingForAck :: ExchangeState -> OtpExchangeMessage -> Process ()
 removeWaitingForAck state@(ExchangeState{known=pending}) (Ack input sender) = do
-  pendingPids <- H.lookup pending input
-  maybe (return ()) (\pendingPids -> H.insert pending input (delete sender pendingPids)) pendingPids
-  return ()
+  pendingPids <- liftIO $ H.lookup pending input
+  maybe (return ()) (\pendingPids -> liftIO $ H.insert pending input (delete sender pendingPids)) pendingPids

@@ -77,4 +77,4 @@ finDelayer = do
 infDelayer :: IO Delay
 infDelayer = do
   r <- randomIO :: IO Int
-  if r `mod` 1000 < 3 then return Infinity else finDelayer
+  if r `mod` 100 < 5 then return Infinity else finDelayer
