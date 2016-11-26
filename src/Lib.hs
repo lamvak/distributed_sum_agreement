@@ -120,10 +120,10 @@ usage = putStrLn $ "Usage: stack exec otp-exe -- <options>\n" ++
                  "  where options are:\n" ++
                  "        --master <host> <port>\n" ++
                  "        --slave  <host> <port>\n" ++
+                 "        --with-seed <RNG seed>\n" ++
                  "        --send-for <send for period> *\n" ++
                  "        --wait-for <wait for period> *\n" ++
-                 "        --with-seed <RNG seed>\n" ++
-                 "        --sim <state model> <generators model>\n" ++
+                 "        --sim <state model> <generators model> *\n" ++
                  "  * not required for slave\n" ++
                  "  available state models: \n" ++
                  "    Simple - just the counter for input messages processed and running product\n" ++
